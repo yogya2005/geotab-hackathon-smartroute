@@ -1,0 +1,12 @@
+{
+  "name": "smartroute-backend",
+  "version": "1.0.0",
+  "description": "SmartRoute backend - session verification, Mapbox optimization, bin sensor API proxy",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx @google-cloud/functions-framework --target=smartroute"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.0.0"
+  }
+}

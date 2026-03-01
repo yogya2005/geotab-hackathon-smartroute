@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
+  <script>
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css';
+    document.head.appendChild(link);
+    var mapLink = document.createElement('link');
+    mapLink.rel = 'stylesheet';
+    mapLink.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(mapLink);
+  </script>
+</head>
+<body style='background:#f4f7f9;padding:20px;font-family:sans-serif;'>
+
+  <div class='container-fluid'>
+    <div class='row mb-3 bg-white p-3 shadow-sm' style='border-radius:8px;'>
+      <div class='col-md-8'>
+        <h3>SmartRoute: Dynamic Waste Fleet Optimization</h3>
+        <p class='text-muted mb-0' id='status-text'>Loading...</p>
+      </div>
+      <div class='col-md-4'>
+        <label class='form-label mb-1'>Fill threshold: <span id='threshold-value'>70</span>%</label>
+        <input type='range' id='threshold-slider' class='form-range' min='50' max='90' step='10' value='70' style='width:100%;'>
+        <div class='d-flex gap-2 mt-1' style='font-size:11px;color:#666;'>
+          <span>Green: empty</span>
+          <span>Yellow: half</span>
+          <span>Red: full</span>
+        </div>
+      </div>
+    </div>
+
+    <div class='row'>
+      <div class='col-md-9'>
+        <div id='map' style='height:450px;width:100%;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);'></div>
+      </div>
+      <div class='col-md-3'>
+        <div class='card shadow-sm p-3'>
+          <h6 class='mb-3'>Route Impact</h6>
+          <div id='stat-stops' style='margin-bottom:8px;'><strong>Stops reduced:</strong> <span id='val-stops'>-</span></div>
+          <div id='stat-km' style='margin-bottom:8px;'><strong>km saved:</strong> <span id='val-km'>-</span></div>
+          <div id='stat-fuel' style='margin-bottom:8px;'><strong>Fuel saved:</strong> <span id='val-fuel'>-</span></div>
+          <div id='stat-co2'><strong>CO2 avoided:</strong> <span id='val-co2'>-</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id='debug-toggle' style='position:fixed;bottom:0;left:0;right:0;text-align:center;'>
+    <button onclick='var d=document.getElementById("debug-log");d.style.display=d.style.display==="none"?"block":"none";' style='background:#e74c3c;color:#fff;border:none;padding:4px 16px;cursor:pointer;font-size:12px;border-radius:4px 4px 0 0;'>Toggle Debug Log</button>
+    <button onclick='copyDebugData()' style='background:#f39c12;color:#fff;border:none;padding:4px 16px;cursor:pointer;font-size:12px;border-radius:4px 4px 0 0;margin-left:4px;'>Copy Debug Data</button>
+    <pre id='debug-log' style='display:none;background:#1e1e1e;color:#0f0;padding:10px;margin:0;max-height:200px;overflow-y:auto;text-align:left;font-size:11px;'></pre>
+  </div>
+
+  <script src='smartroute.js'></script>
+</body>
+</html>
