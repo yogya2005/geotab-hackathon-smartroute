@@ -214,12 +214,13 @@ export async function writeRouteToGeotab(
 
   const routeName = `SmartRoute-${baseName}-${new Date().toISOString().slice(0, 10)}`;
 
-  // Step 1: Create zones for bins that don't have real Geotab IDs
+  // Step 1: Ensure every bin has a real Geotab Zone ID
   const zoneRefs: { id: string }[] = [];
   for (const bin of optimizedBins) {
-    const isDemo = bin.id.startsWith("demo-") || bin.id.startsWith("dw-") ||
-                   bin.id.startsWith("me-") || bin.id.startsWith("wf-");
-    if (!isDemo) {
+    const needsZone = bin.id.startsWith("demo-") || bin.id.startsWith("dw-") ||
+                      bin.id.startsWith("me-") || bin.id.startsWith("wf-") ||
+                      bin.id.startsWith("local-");
+    if (!needsZone) {
       zoneRefs.push({ id: bin.id });
     } else {
       const zoneId = await callApi<string>(api, "Add", {
@@ -235,23 +236,21 @@ export async function writeRouteToGeotab(
     }
   }
 
-  // Step 2: Create Route
-  const newRouteId = await callApi<string>(api, "Add", {
-    typeName: "Route",
-    entity: { name: routeName, comment: "SmartRoute optimized waste collection" },
-  });
+  // Step 2: Build plan items and create Route with routePlanItemCollection
+  const routePlanItems = zoneRefs.map((zr, seq) => ({
+    zone: zr,
+    sequence: seq,
+  }));
 
-  // Step 3: Create RoutePlanItems
-  for (let seq = 0; seq < zoneRefs.length; seq++) {
-    try {
-      await callApi<string>(api, "Add", {
-        typeName: "RoutePlanItem",
-        entity: { route: { id: newRouteId }, zone: zoneRefs[seq], sequence: seq },
-      });
-    } catch (err) {
-      console.warn("[SmartRoute] RoutePlanItem error:", err);
-    }
-  }
+  await callApi<string>(api, "Add", {
+    typeName: "Route",
+    entity: {
+      name: routeName,
+      comment: "SmartRoute optimized waste collection",
+      routeType: "Basic",
+      routePlanItemCollection: routePlanItems,
+    },
+  });
 
   return routeName;
 }
