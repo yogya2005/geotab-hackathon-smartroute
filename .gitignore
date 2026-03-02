@@ -16,3 +16,7 @@ npm-debug.log*
 # Build output
 dist/
 build/
+
+#Personal Documentation
+yogya_doc.md
+.claude
