@@ -61,10 +61,14 @@ smartroute/
 ├── scripts/
 │   ├── explore-db.js  # List devices, zones, routes
 │   └── seed-demo-routes.js  # Create Toronto demo route
-└── docs/
-    ├── API_KEYS.md    # Where to get API keys
-    ├── ROUTE_SCHEMA.md  # Zone/Route/RoutePlanItem schema
-    └── VISION.md      # Roadmap: skip logic, predictive, metrics
+├── docs/
+│   ├── API_KEYS.md    # Where to get API keys
+│   ├── ROUTE_SCHEMA.md  # Zone/Route/RoutePlanItem schema
+│   └── VISION.md      # Roadmap: skip logic, predictive, metrics
+└── geotab-vibe-coding-resources/  # Curated refs from geotab-vibe-guide
+    ├── README.md      # What's here + SmartRoute mapping
+    ├── GEOTAB_ADDINS.md, DEMO_DATABASE_REFERENCE.md, ...
+    └── skills-geotab-references/  # ADDINS, STORAGE_API, API_QUICKSTART, etc.
 ```
 
 ## Demo Mode
