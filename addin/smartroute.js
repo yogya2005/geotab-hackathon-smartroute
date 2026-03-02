@@ -154,18 +154,86 @@ geotab.addin['smartroute'] = function() {
   var originalPolyline = null;
   var optimizedPolyline = null;
   var bins = [];
+  var depot = BINS_DATA.depot;
   var binStateId = null;
   var lastOptimizedOrder = [];
   var lastThreshold = 70;
 
+  function zoneCentroid(zone) {
+    var pts = zone.points || [];
+    if (pts.length === 0) return null;
+    var lat = 0, lng = 0;
+    for (var i = 0; i < pts.length; i++) {
+      lng += pts[i].x || 0;
+      lat += pts[i].y || 0;
+    }
+    return { lat: lat / pts.length, lng: lng / pts.length };
+  }
+
+  function loadZonesFromGeotab(cb) {
+    apiRef.call('Get', { typeName: 'Zone' }, function(zones) {
+      apiRef.call('Get', { typeName: 'RoutePlanItem' }, function(planItems) {
+        var zoneMap = {};
+        for (var i = 0; i < (zones || []).length; i++) {
+          var z = zones[i];
+          var c = zoneCentroid(z);
+          if (c) zoneMap[z.id] = { id: z.id, name: z.name || ('Zone ' + z.id), lat: c.lat, lng: c.lng };
+        }
+        var ordered = [];
+        if (planItems && planItems.length > 0) {
+          planItems.sort(function(a, b) {
+            var ra = (a.route && a.route.id) || a.route;
+            var rb = (b.route && b.route.id) || b.route;
+            if (ra !== rb) return String(ra).localeCompare(String(rb));
+            return (a.sequence || 0) - (b.sequence || 0);
+          });
+          var seen = {};
+          for (var j = 0; j < planItems.length; j++) {
+            var zid = (planItems[j].zone && planItems[j].zone.id) || planItems[j].zone;
+            if (zid && zoneMap[zid] && !seen[zid]) {
+              ordered.push(zoneMap[zid]);
+              seen[zid] = true;
+            }
+          }
+        }
+        if (ordered.length === 0) {
+          for (var k in zoneMap) ordered.push(zoneMap[k]);
+        }
+        bins = ordered.map(function(b) {
+          return { id: b.id, name: b.name, lat: b.lat, lng: b.lng, fillLevel: Math.floor(Math.random() * 95) + 5 };
+        });
+        if (bins.length > 0) {
+          depot = { lat: bins[0].lat, lng: bins[0].lng };
+          debugLog('Loaded ' + bins.length + ' bins from Geotab Zones');
+          if (map) map.setView([depot.lat, depot.lng], 13);
+        }
+        if (cb) cb();
+      }, function() {
+        var zs = zones || [];
+        bins = zs.filter(function(z) { return zoneCentroid(z); }).map(function(z) {
+          var c = zoneCentroid(z);
+          return { id: z.id, name: z.name || ('Zone ' + z.id), lat: c.lat, lng: c.lng, fillLevel: Math.floor(Math.random() * 95) + 5 };
+        });
+        if (bins.length > 0) {
+          depot = { lat: bins[0].lat, lng: bins[0].lng };
+          if (map) map.setView([depot.lat, depot.lng], 13);
+        }
+        if (cb) cb();
+      });
+    }, function() {
+      debugLog('Zone Get failed, using synthetic bins');
+      bins = BINS_DATA.bins.map(function(b) {
+        return { id: b.id, lat: b.lat, lng: b.lng, fillLevel: Math.floor(Math.random() * 95) + 5 };
+      });
+      depot = BINS_DATA.depot;
+      if (map) map.setView([depot.lat, depot.lng], 13);
+      if (cb) cb();
+    });
+  }
+
   function randomizeFillLevels() {
-    bins = BINS_DATA.bins.map(function(b) {
-      return {
-        id: b.id,
-        lat: b.lat,
-        lng: b.lng,
-        fillLevel: Math.floor(Math.random() * 95) + 5
-      };
+    bins = bins.map(function(b) {
+      return { id: b.id, name: b.name, lat: b.lat, lng: b.lng, fillLevel: Math.floor(Math.random() * 95) + 5 };
     });
   }
 
@@ -184,17 +252,18 @@ geotab.addin['smartroute'] = function() {
         }
       }
       if (binState && binState.bins && binState.bins.length > 0) {
-        bins = binState.bins;
-        debugLog('Loaded bin_state from AddInData: ' + bins.length + ' bins');
-      } else {
-        randomizeFillLevels();
-        saveBinState(cb);
-        return;
+        var byId = {};
+        for (var j = 0; j < binState.bins.length; j++) {
+          byId[binState.bins[j].id] = binState.bins[j].fillLevel;
+        }
+        for (var k = 0; k < bins.length; k++) {
+          if (byId[bins[k].id] !== undefined) bins[k].fillLevel = byId[bins[k].id];
+        }
+        debugLog('Merged fillLevels from AddInData');
       }
       if (cb) cb();
     }, function(err) {
       debugLog('AddInData Get error: ' + err);
-      randomizeFillLevels();
       if (cb) cb();
     });
   }
@@ -268,7 +337,7 @@ geotab.addin['smartroute'] = function() {
     });
     var m = L.marker([bin.lat, bin.lng], { icon: icon })
       .addTo(map)
-      .bindPopup('<b>' + bin.id + '</b><br>Fill: ' + bin.fillLevel + '%');
+      .bindPopup('<b>' + (bin.name || bin.id) + '</b><br>Fill: ' + bin.fillLevel + '%');
     binMarkers.push(m);
   }
 
@@ -325,7 +394,6 @@ geotab.addin['smartroute'] = function() {
     lastThreshold = threshold;
 
     var binsAboveThreshold = bins.filter(function(b) { return b.fillLevel >= threshold; });
-    var depot = BINS_DATA.depot;
     var vehiclesWithPos = (vehicleStatuses || []).filter(function(s) { return s.latitude && s.longitude; });
 
     clearMapOverlays();
@@ -392,25 +460,31 @@ geotab.addin['smartroute'] = function() {
     btn.textContent = 'Writing...';
 
     var routeName = 'SmartRoute-' + new Date().toISOString().slice(0, 10) + '-' + Date.now();
-    var zoneIds = [];
+    var zoneRefs = [];
     var idx = 0;
 
     function createNextZone() {
       if (idx >= lastOptimizedOrder.length) {
-        createRoute(zoneIds);
+        createRoute(zoneRefs);
         return;
       }
       var bin = lastOptimizedOrder[idx];
-      var zoneName = 'SmartRoute-' + bin.id;
+      var isExistingZone = bin.id && bin.id.indexOf('bin-') !== 0;
+      if (isExistingZone) {
+        zoneRefs.push({ id: bin.id });
+        idx++;
+        createNextZone();
+        return;
+      }
       apiRef.call('Add', {
         typeName: 'Zone',
         entity: {
-          name: zoneName,
+          name: 'SmartRoute-' + bin.id,
           points: createZonePoints(bin.lat, bin.lng),
           displayed: true
         }
       }, function(zoneId) {
-        zoneIds.push({ id: zoneId });
+        zoneRefs.push({ id: zoneId });
         idx++;
         createNextZone();
       }, function(err) {
@@ -505,7 +579,9 @@ geotab.addin['smartroute'] = function() {
       apiRef = api;
       debugLog('SmartRoute initialize');
 
-      map = L.map('map').setView([40.7128, -74.006], 13);
+      var centerLat = depot ? depot.lat : 40.7128;
+      var centerLng = depot ? depot.lng : -74.006;
+      map = L.map('map').setView([centerLat, centerLng], 13);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap'
       }).addTo(map);
@@ -517,8 +593,10 @@ geotab.addin['smartroute'] = function() {
       document.getElementById('write-route-btn').onclick = writeRouteToGeotab;
       document.getElementById('log-collection-btn').onclick = logCollectionSimulate;
 
-      loadBinState(function() {
-        loadVehicles();
+      loadZonesFromGeotab(function() {
+        loadBinState(function() {
+          loadVehicles();
+        });
       });
       callback();
     },

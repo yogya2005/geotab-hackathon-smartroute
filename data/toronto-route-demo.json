@@ -1,0 +1,15 @@
+{
+  "routeName": "SmartRoute Toronto Demo - Downtown",
+  "zones": [
+    { "name": "Bin - Union Station", "lat": 43.6457, "lng": -79.3810 },
+    { "name": "Bin - 65 Bremner Blvd", "lat": 43.6432, "lng": -79.3809 },
+    { "name": "Bin - The Well", "lat": 43.6434, "lng": -79.3945 },
+    { "name": "Bin - Rogers Centre", "lat": 43.6415, "lng": -79.3894 },
+    { "name": "Bin - CN Tower", "lat": 43.6426, "lng": -79.3871 },
+    { "name": "Bin - Harbourfront", "lat": 43.6390, "lng": -79.3785 },
+    { "name": "Bin - St Lawrence Market", "lat": 43.6493, "lng": -79.3715 },
+    { "name": "Bin - Distillery District", "lat": 43.6525, "lng": -79.3589 },
+    { "name": "Bin - Financial District", "lat": 43.6488, "lng": -79.3802 },
+    { "name": "Bin - Entertainment District", "lat": 43.6448, "lng": -79.3862 }
+  ]
+}

@@ -34,6 +34,16 @@ SmartRoute is a Geotab Add-In that integrates bin fill-level sensor data with ve
 3. In MyGeotab: User profile → Administration → System Settings → Add-Ins → New Add-In → Configuration tab → Paste → Save
 4. **Refresh** and find "SmartRoute" in the sidebar
 
+## Seed Demo Routes (Toronto)
+
+Create zones + route in your Geotab DB:
+
+```bash
+node scripts/seed-demo-routes.js
+```
+
+Uses `data/toronto-route-demo.json`. Refresh the Add-In to see the new bins.
+
 ## Project Structure
 
 ```
@@ -45,10 +55,16 @@ smartroute/
 │   ├── smartroute-config.json      # External hosted config
 │   └── smartroute-embedded-config.json  # Embedded (no hosting)
 ├── data/
-│   └── bins-demo.json # Synthetic bin data for demo
+│   ├── bins-demo.json       # Synthetic bin data (fallback)
+│   └── toronto-route-demo.json  # Toronto zones for seed script
 ├── backend/           # Optional: Cloud Function for production
+├── scripts/
+│   ├── explore-db.js  # List devices, zones, routes
+│   └── seed-demo-routes.js  # Create Toronto demo route
 └── docs/
-    └── API_KEYS.md    # Where to get API keys
+    ├── API_KEYS.md    # Where to get API keys
+    ├── ROUTE_SCHEMA.md  # Zone/Route/RoutePlanItem schema
+    └── VISION.md      # Roadmap: skip logic, predictive, metrics
 ```
 
 ## Demo Mode
