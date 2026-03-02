@@ -12,6 +12,7 @@ import {
 "@/components/SvgIcons";
 import { useSmartRoute } from "@/hooks/useSmartRoute";
 import type { GeotabRouteRef } from "@/services/geotabApi";
+import { toast } from "@/hooks/use-toast";
 import iconClock from "@/assets/icon-clock.png";
 import iconFuel from "@/assets/icon-fuel.png";
 import iconCo2 from "@/assets/icon-co2.png";
@@ -480,7 +481,21 @@ const Index: React.FC = () => {
                   routeColor={selectedRoute.color}
                   metrics={selectedOpt.result.metrics}
                   accepted={selectedOpt.accepted}
-                  onAccept={() => sr.acceptRoute(sr.selectedRouteId!)}
+                  onAccept={async () => {
+                    const routeName = await sr.acceptRoute(sr.selectedRouteId!);
+                    if (routeName) {
+                      toast({
+                        title: "Route accepted",
+                        description: `"${routeName}" has been saved as a Geotab route.`,
+                      });
+                    } else {
+                      toast({
+                        title: "Failed to save route",
+                        description: "Could not write the optimized route to Geotab. Please try again.",
+                        variant: "destructive",
+                      });
+                    }
+                  }}
                   onDiscard={() => sr.discardRoute(sr.selectedRouteId!)}
                   onClose={() => sr.setSelectedRouteId(null)}
                 />

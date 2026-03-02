@@ -174,19 +174,24 @@ export function useSmartRoute() {
   }, [loadedRoutes, threshold, intensity, isOptimizing]);
 
   /* ── Accept an optimization (write to Geotab) ── */
-  const acceptRoute = useCallback(async (routeId: string) => {
+  const acceptRoute = useCallback(async (routeId: string): Promise<string | null> => {
     const opt = optimizedMap[routeId];
     const entry = loadedRoutes.find((r) => r.id === routeId);
-    if (!opt || !entry) return;
+    if (!opt || !entry) return null;
 
-    const routeName = await writeRouteToGeotab(entry.name, opt.result.optimizedBins);
-    if (routeName) {
-      setOptimizedMap((prev) => ({
-        ...prev,
-        [routeId]: { ...prev[routeId], accepted: true },
-      }));
+    try {
+      const routeName = await writeRouteToGeotab(entry.name, opt.result.optimizedBins);
+      if (routeName) {
+        setOptimizedMap((prev) => ({
+          ...prev,
+          [routeId]: { ...prev[routeId], accepted: true },
+        }));
+      }
+      return routeName;
+    } catch (err) {
+      console.error("[SmartRoute] Failed to write route to Geotab:", err);
+      return null;
     }
-    return routeName;
   }, [optimizedMap, loadedRoutes]);
 
   /* ── Discard an optimization ── */
