@@ -16,6 +16,7 @@ import {
 import {
   runOptimization,
   predictFillLevels,
+  projectFillLevels,
   type AlgoResult,
   type AlgoMetrics,
   type Prediction,
@@ -35,6 +36,9 @@ export interface OptimizedResult {
   accepted: boolean;
   roadPolylines: LatLng[][]; // one per vehicleRoute
   assignedVehicle: string | null;
+  forecastDate?: string;           // ISO date string if forecast optimization
+  dayLabel?: string;               // "Monday", etc. if week optimization
+  confidences?: { binId: string; confidence: "high" | "medium" | "low" }[];
 }
 
 /* ── Constants ── */
@@ -143,6 +147,15 @@ export function useSmartRoute() {
     if (selectedRouteId === routeId) setSelectedRouteId(null);
   }, [selectedRouteId]);
 
+  /* ── Load all routes at once ── */
+  const addAllRoutes = useCallback(async () => {
+    for (const ref of allRoutes) {
+      if (!loadedRoutes.some((r) => r.id === ref.id)) {
+        await addRoute(ref);
+      }
+    }
+  }, [allRoutes, loadedRoutes, addRoute]);
+
   /* ── Optimize all loaded routes ── */
   const runOptimize = useCallback(async () => {
     if (loadedRoutes.length === 0 || isOptimizing) return;
@@ -210,18 +223,141 @@ export function useSmartRoute() {
     });
   }, [loadedRoutes, threshold, intensity, isOptimizing]);
 
+  /* ── Helper: assign nearest vehicle to a depot ── */
+  const assignNearestVehicle = useCallback((depot: { lat: number; lng: number }): string | null => {
+    if (vehiclesRef.current.length === 0) return null;
+    let bestDist = Infinity;
+    let assignedVehicle: string | null = null;
+    const toRad = (d: number) => d * Math.PI / 180;
+    for (const v of vehiclesRef.current) {
+      const dlat = toRad(v.latitude - depot.lat);
+      const dlng = toRad(v.longitude - depot.lng);
+      const a = Math.sin(dlat / 2) ** 2 + Math.cos(toRad(depot.lat)) * Math.cos(toRad(v.latitude)) * Math.sin(dlng / 2) ** 2;
+      const dist = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 6371;
+      if (dist < bestDist) {
+        bestDist = dist;
+        assignedVehicle = v.name || `Vehicle (${v.latitude.toFixed(2)}, ${v.longitude.toFixed(2)})`;
+      }
+    }
+    return assignedVehicle;
+  }, []);
+
+  /* ── Forecast optimize: optimize for a specific future date ── */
+  const runForecastOptimize = useCallback(async (targetDate: string) => {
+    if (loadedRoutes.length === 0 || isOptimizing) return;
+    setIsOptimizing(true);
+    setSelectedRouteId(null);
+
+    const newOptMap: Record<string, OptimizedResult> = {};
+
+    for (const entry of loadedRoutes) {
+      setOptimizeStatus(`Projecting fills for ${entry.name} to ${targetDate}…`);
+
+      const preds = predictFillLevels(entry.collectionLogs, entry.bins, threshold);
+      const projectedBins = projectFillLevels(entry.bins, preds, targetDate);
+
+      setOptimizeStatus(`Optimizing ${entry.name} (forecast ${targetDate})…`);
+
+      const result = await runOptimization(projectedBins, entry.depot, {
+        threshold,
+        intensity: intensity / 100,
+        vehicleCapacity: 10,
+        vehicles: vehiclesRef.current,
+      });
+
+      const roadPolylines: LatLng[][] = [];
+      for (const vr of result.vehicleRoutes) {
+        const poly = await fetchRoadPolyline(vr.points);
+        roadPolylines.push(poly);
+      }
+
+      newOptMap[entry.id] = {
+        result,
+        accepted: false,
+        roadPolylines,
+        assignedVehicle: assignNearestVehicle(entry.depot),
+        forecastDate: targetDate,
+        confidences: projectedBins.map((b) => ({ binId: b.id, confidence: b.confidence })),
+      };
+    }
+
+    setOptimizedMap((prev) => ({ ...prev, ...newOptMap }));
+    setOptimizeStatus("Done! Review your forecast-optimized routes.");
+    setIsOptimizing(false);
+  }, [loadedRoutes, threshold, intensity, isOptimizing, assignNearestVehicle]);
+
+  /* ── Week optimize: optimize all loaded routes for Mon–Fri ── */
+  const runWeekOptimize = useCallback(async (weekStartISO: string) => {
+    if (loadedRoutes.length === 0 || isOptimizing) return;
+    setIsOptimizing(true);
+    setSelectedRouteId(null);
+
+    const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+    const weekStart = new Date(weekStartISO);
+    const newOptMap: Record<string, OptimizedResult> = {};
+
+    for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
+      const dayDate = new Date(weekStart);
+      dayDate.setDate(weekStart.getDate() + dayOffset);
+      const dayISO = dayDate.toISOString().substring(0, 10);
+      const dayName = DAY_NAMES[dayOffset];
+
+      for (const entry of loadedRoutes) {
+        setOptimizeStatus(`Optimizing ${entry.name} for ${dayName} (${dayISO})…`);
+
+        const preds = predictFillLevels(entry.collectionLogs, entry.bins, threshold);
+        const projectedBins = projectFillLevels(entry.bins, preds, dayISO);
+
+        const result = await runOptimization(projectedBins, entry.depot, {
+          threshold,
+          intensity: intensity / 100,
+          vehicleCapacity: 10,
+          vehicles: vehiclesRef.current,
+        });
+
+        const roadPolylines: LatLng[][] = [];
+        for (const vr of result.vehicleRoutes) {
+          const poly = await fetchRoadPolyline(vr.points);
+          roadPolylines.push(poly);
+        }
+
+        const compositeKey = `${entry.id}::${dayISO}`;
+        newOptMap[compositeKey] = {
+          result,
+          accepted: false,
+          roadPolylines,
+          assignedVehicle: assignNearestVehicle(entry.depot),
+          forecastDate: dayISO,
+          dayLabel: dayName,
+          confidences: projectedBins.map((b) => ({ binId: b.id, confidence: b.confidence })),
+        };
+      }
+    }
+
+    setOptimizedMap((prev) => ({ ...prev, ...newOptMap }));
+    setOptimizeStatus("Done! Review your week-optimized routes.");
+    setIsOptimizing(false);
+  }, [loadedRoutes, threshold, intensity, isOptimizing, assignNearestVehicle]);
+
   /* ── Accept an optimization (write to Geotab) ── */
-  const acceptRoute = useCallback(async (routeId: string): Promise<string | null> => {
-    const opt = optimizedMap[routeId];
+  const acceptRoute = useCallback(async (routeKey: string): Promise<string | null> => {
+    const opt = optimizedMap[routeKey];
+    // For week mode, routeKey is "routeId::dateISO"; extract base routeId
+    const routeId = routeKey.includes("::") ? routeKey.split("::")[0] : routeKey;
     const entry = loadedRoutes.find((r) => r.id === routeId);
     if (!opt || !entry) return null;
 
     try {
-      const routeName = await writeRouteToGeotab(entry.name, opt.result.optimizedBins);
+      const nameSuffix = opt.dayLabel ? `-${opt.dayLabel}` : "";
+      const routeName = await writeRouteToGeotab(
+        `${entry.name}${nameSuffix}`,
+        opt.result.optimizedBins,
+        opt.forecastDate,
+      );
       if (routeName) {
         setOptimizedMap((prev) => ({
           ...prev,
-          [routeId]: { ...prev[routeId], accepted: true },
+          [routeKey]: { ...prev[routeKey], accepted: true },
         }));
       }
       return routeName;
@@ -232,12 +368,13 @@ export function useSmartRoute() {
   }, [optimizedMap, loadedRoutes]);
 
   /* ── Discard an optimization ── */
-  const discardRoute = useCallback((routeId: string) => {
+  const discardRoute = useCallback((routeKey: string) => {
     setOptimizedMap((prev) => {
       const next = { ...prev };
-      delete next[routeId];
+      delete next[routeKey];
       return next;
     });
+    const routeId = routeKey.includes("::") ? routeKey.split("::")[0] : routeKey;
     if (selectedRouteId === routeId) setSelectedRouteId(null);
   }, [selectedRouteId]);
 
@@ -270,6 +407,7 @@ export function useSmartRoute() {
     // Loaded routes
     loadedRoutes,
     addRoute,
+    addAllRoutes,
     removeRoute,
 
     // Optimization
@@ -277,6 +415,8 @@ export function useSmartRoute() {
     isOptimizing,
     optimizeStatus,
     runOptimize,
+    runForecastOptimize,
+    runWeekOptimize,
     acceptRoute,
     discardRoute,
 

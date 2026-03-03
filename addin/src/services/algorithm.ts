@@ -56,6 +56,11 @@ export interface AlgoOptions {
   vehicles?: { latitude: number; longitude: number }[];
 }
 
+export interface ProjectedBin extends AlgoBin {
+  confidence: "high" | "medium" | "low";
+  originalFillLevel: number;
+}
+
 /* ── Global type declaration ── */
 
 declare global {
@@ -64,6 +69,7 @@ declare global {
       run: (bins: AlgoBin[], depot: { lat: number; lng: number }, options: AlgoOptions) => AlgoResult;
       runAsync: (bins: AlgoBin[], depot: { lat: number; lng: number }, options: AlgoOptions, callback: (result: AlgoResult) => void) => void;
       predict: (collectionLogs: unknown[], bins: AlgoBin[], options: { threshold: number }) => Prediction[];
+      projectFillLevels: (bins: AlgoBin[], predictions: Prediction[], targetDateISO: string) => ProjectedBin[];
     };
     SMARTROUTE_CONFIG?: { googleMapsKey: string };
   }
@@ -103,4 +109,19 @@ export function predictFillLevels(
 ): Prediction[] {
   if (!window.SmartRouteAlgo) return [];
   return window.SmartRouteAlgo.predict(collectionLogs, bins, { threshold });
+}
+
+export function projectFillLevels(
+  bins: AlgoBin[],
+  predictions: Prediction[],
+  targetDateISO: string,
+): ProjectedBin[] {
+  if (!window.SmartRouteAlgo) {
+    return bins.map((b) => ({
+      ...b,
+      confidence: "low" as const,
+      originalFillLevel: b.fillLevel,
+    }));
+  }
+  return window.SmartRouteAlgo.projectFillLevels(bins, predictions, targetDateISO);
 }

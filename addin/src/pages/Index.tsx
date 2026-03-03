@@ -284,6 +284,16 @@ const Index: React.FC = () => {
   const isForecast = activeWeek === "next";
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showCostReport, setShowCostReport] = useState(false);
+
+  // Forecast controls
+  const [forecastTargetDate, setForecastTargetDate] = useState<string>(() => {
+    const d = new Date();
+    const dayOfWeek = d.getDay();
+    const daysUntilNextMon = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+    d.setDate(d.getDate() + daysUntilNextMon);
+    return d.toISOString().substring(0, 10);
+  });
+  const [optimizeWeekChecked, setOptimizeWeekChecked] = useState(false);
   const [focusRouteId, setFocusRouteId] = useState<string | null>(null);
   const [tourStep, setTourStep] = useState(0); // -1 = dismissed
   const [driverSimEnabled, setDriverSimEnabled] = useState(false);
@@ -357,9 +367,24 @@ const Index: React.FC = () => {
 
   const handleOptimize = async () => {
     if (sr.isOptimizing || sr.loadedRoutes.length === 0) return;
-    await sr.runOptimize();
+
+    if (isForecast) {
+      if (optimizeWeekChecked) {
+        // Compute Monday of the target week
+        const targetDate = new Date(forecastTargetDate);
+        const dayOfWeek = targetDate.getDay();
+        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        const monday = new Date(targetDate);
+        monday.setDate(targetDate.getDate() + mondayOffset);
+        await sr.runWeekOptimize(monday.toISOString().substring(0, 10));
+      } else {
+        await sr.runForecastOptimize(forecastTargetDate);
+      }
+    } else {
+      await sr.runOptimize();
+    }
+
     setShowReviewModal(true);
-    // Focus the first optimized route
     if (sr.loadedRoutes.length > 0) setFocusRouteId(sr.loadedRoutes[0].id);
   };
 
@@ -486,45 +511,90 @@ const Index: React.FC = () => {
                 </div>
               </div>
 
-              {/* Route chips */}
-              {sr.loadedRoutes.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {(filtersExpanded ? sr.loadedRoutes : sr.loadedRoutes.slice(0, MAX_VISIBLE_CHIPS)).map((r) =>
-                    <button
-                      key={r.id}
-                      onClick={() => removeRoute(r.id)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition shrink-0">
-                      <span className="w-2 h-2 rounded-full" style={{ background: r.color }} />
-                      {r.name}
-                      <span className="text-[10px] text-primary/60 ml-0.5">{r.bins.length}</span>
-                      <CloseIcon size={12} color="hsl(200, 65%, 44%)" />
-                    </button>
-                  )}
-                  {sr.loadedRoutes.length > MAX_VISIBLE_CHIPS && !filtersExpanded && (
-                    <button
-                      onClick={() => setFiltersExpanded(true)}
-                      className="px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/80 transition shrink-0">
-                      +{sr.loadedRoutes.length - MAX_VISIBLE_CHIPS} more
-                    </button>
-                  )}
-                  {filtersExpanded && sr.loadedRoutes.length > MAX_VISIBLE_CHIPS && (
-                    <button
-                      onClick={() => setFiltersExpanded(false)}
-                      className="px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/80 transition shrink-0">
-                      Show less
-                    </button>
-                  )}
-                </div>
-              )}
+              {/* Route chips + Select All */}
+              <div className="flex flex-wrap items-center gap-2">
+                {sr.loadedRoutes.length > 0 && (
+                  <>
+                    {(filtersExpanded ? sr.loadedRoutes : sr.loadedRoutes.slice(0, MAX_VISIBLE_CHIPS)).map((r) =>
+                      <button
+                        key={r.id}
+                        onClick={() => removeRoute(r.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition shrink-0">
+                        <span className="w-2 h-2 rounded-full" style={{ background: r.color }} />
+                        {r.name}
+                        <span className="text-[10px] text-primary/60 ml-0.5">{r.bins.length}</span>
+                        <CloseIcon size={12} color="hsl(200, 65%, 44%)" />
+                      </button>
+                    )}
+                    {sr.loadedRoutes.length > MAX_VISIBLE_CHIPS && !filtersExpanded && (
+                      <button
+                        onClick={() => setFiltersExpanded(true)}
+                        className="px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/80 transition shrink-0">
+                        +{sr.loadedRoutes.length - MAX_VISIBLE_CHIPS} more
+                      </button>
+                    )}
+                    {filtersExpanded && sr.loadedRoutes.length > MAX_VISIBLE_CHIPS && (
+                      <button
+                        onClick={() => setFiltersExpanded(false)}
+                        className="px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/80 transition shrink-0">
+                        Show less
+                      </button>
+                    )}
+                  </>
+                )}
+                {sr.allRoutes.length > 0 && sr.loadedRoutes.length < sr.allRoutes.length && (
+                  <button
+                    onClick={() => sr.addAllRoutes()}
+                    className="px-3 py-1.5 rounded-full bg-accent/10 text-accent text-xs font-semibold hover:bg-accent/20 transition shrink-0"
+                  >
+                    Select All ({sr.allRoutes.length})
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Forecast banner */}
+            {/* Forecast controls */}
             {isForecast && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+              <div className="flex items-center gap-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                 <CalendarIcon size={14} color="hsl(38, 92%, 50%)" />
-                <span>
-                  <strong>Forecast mode:</strong> Fill levels are predicted for {nextWeek.label}. Optimization is disabled — use this view for pre-planning.
-                </span>
+                <span className="font-bold shrink-0">Forecast:</span>
+
+                {/* Date picker — hidden when optimize week is checked */}
+                {!optimizeWeekChecked && (
+                  <div className="flex items-center gap-1.5">
+                    <span>Target date:</span>
+                    <input
+                      type="date"
+                      value={forecastTargetDate}
+                      min={new Date().toISOString().substring(0, 10)}
+                      onChange={(e) => setForecastTargetDate(e.target.value)}
+                      className="px-2 py-1 rounded bg-white border border-amber-300 text-xs text-foreground"
+                    />
+                  </div>
+                )}
+
+                {optimizeWeekChecked && (
+                  <span className="text-amber-700 font-semibold">
+                    Week of {(() => {
+                      const d = new Date(forecastTargetDate);
+                      const day = d.getDay();
+                      const mondayOffset = day === 0 ? -6 : 1 - day;
+                      d.setDate(d.getDate() + mondayOffset);
+                      return d.toISOString().substring(0, 10);
+                    })()}
+                  </span>
+                )}
+
+                {/* Optimize Week checkbox */}
+                <label className="flex items-center gap-1.5 ml-auto cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={optimizeWeekChecked}
+                    onChange={(e) => setOptimizeWeekChecked(e.target.checked)}
+                    className="accent-amber-600"
+                  />
+                  <span className="font-semibold">Optimize Week</span>
+                </label>
               </div>
             )}
 
@@ -582,21 +652,22 @@ const Index: React.FC = () => {
               </div>
               {/* Optimized Routes review overlay — floats on map, cycles through routes */}
               {showReviewModal && (() => {
-                const optimizedRoutes = sr.loadedRoutes
-                  .map((route) => {
-                    const opt = sr.optimizedMap[route.id];
-                    return opt ? { route, opt } : null;
+                const optimizedRoutes = Object.entries(sr.optimizedMap)
+                  .map(([key, opt]) => {
+                    const routeId = key.includes("::") ? key.split("::")[0] : key;
+                    const route = sr.loadedRoutes.find((r) => r.id === routeId);
+                    return route && opt ? { route, opt, key, dayLabel: opt.dayLabel } : null;
                   })
-                  .filter(Boolean) as { route: typeof sr.loadedRoutes[0]; opt: typeof sr.optimizedMap[string] }[];
+                  .filter(Boolean) as { route: typeof sr.loadedRoutes[0]; opt: typeof sr.optimizedMap[string]; key: string; dayLabel?: string }[];
 
                 if (optimizedRoutes.length === 0) return null;
 
                 return (
-                  <div className="absolute bottom-4 left-4 z-[1100] bg-card/95 backdrop-blur-sm rounded-xl shadow-xl border border-border min-w-[280px] max-w-[340px] p-4 overflow-y-auto max-h-[85vh]">
+                  <div className="absolute bottom-4 left-4 z-[1100] bg-card/95 backdrop-blur-sm rounded-xl shadow-xl border border-border min-w-[280px] max-w-[380px] p-4 overflow-y-auto max-h-[85vh]">
                     <OptimizeReviewModal
                       optimizedRoutes={optimizedRoutes}
-                      onAccept={async (routeId) => {
-                        const routeName = await sr.acceptRoute(routeId);
+                      onAccept={async (routeKey) => {
+                        const routeName = await sr.acceptRoute(routeKey);
                         if (routeName) {
                           toast({ title: "Route accepted", description: `"${routeName}" saved to Geotab.` });
                         } else {
@@ -604,7 +675,7 @@ const Index: React.FC = () => {
                         }
                         return routeName;
                       }}
-                      onDiscard={(routeId) => sr.discardRoute(routeId)}
+                      onDiscard={(routeKey) => sr.discardRoute(routeKey)}
                       onClose={() => setShowReviewModal(false)}
                       onRouteChange={(routeId) => setFocusRouteId(routeId)}
                     />
@@ -724,15 +795,10 @@ const Index: React.FC = () => {
             <button
               ref={optimizeBtnRef}
               onClick={() => { handleOptimize(); if (tourStep === 3) dismissTour(); }}
-              disabled={sr.isOptimizing || sr.loadedRoutes.length === 0 || isForecast}
+              disabled={sr.isOptimizing || sr.loadedRoutes.length === 0}
               className="w-full py-3.5 bg-gradient-to-r from-primary to-accent text-white font-bold text-sm flex items-center justify-center gap-2.5 hover:opacity-90 transition disabled:opacity-60 shadow-md rounded"
             >
-              {isForecast ? (
-                <>
-                  <CalendarIcon size={18} color="white" />
-                  Forecast Only — Switch to This Week
-                </>
-              ) : sr.isOptimizing ? (
+              {sr.isOptimizing ? (
                 <>
                   <SpinnerIcon size={18} color="white" />
                   Optimizing...
@@ -741,6 +807,16 @@ const Index: React.FC = () => {
                 <>
                   <CheckIcon size={18} color="white" />
                   Optimized! Review again
+                </>
+              ) : isForecast && optimizeWeekChecked ? (
+                <>
+                  <CalendarIcon size={18} color="white" />
+                  Optimize Next Week (Mon–Fri)
+                </>
+              ) : isForecast ? (
+                <>
+                  <CalendarIcon size={18} color="white" />
+                  Optimize for {forecastTargetDate}
                 </>
               ) : (
                 <>
@@ -784,8 +860,8 @@ const Index: React.FC = () => {
             {/* Stat Cards */}
             {optimizeState === "optimized" && (
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                Based on current sensor readings
+                <span className={`w-1.5 h-1.5 rounded-full ${isForecast ? "bg-amber-400" : "bg-green-500"}`} />
+                {isForecast ? "Based on predicted fill levels" : "Based on current sensor readings"}
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">

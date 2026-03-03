@@ -444,6 +444,47 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────────
+     PROJECT FILL LEVELS TO A FUTURE DATE
+  ───────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * projectFillLevels(bins, predictions, targetDateISO)
+   *
+   * Takes current bins + prediction results + a target date string (YYYY-MM-DD)
+   * and returns a new bins array with fillLevel projected forward to that date.
+   * Each bin also gets a `confidence` field and `originalFillLevel`.
+   */
+  function projectFillForDate(bins, predictions, targetDateISO) {
+    var MS_PER_DAY = 24 * 60 * 60 * 1000;
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var target = new Date(targetDateISO);
+    target.setHours(0, 0, 0, 0);
+    var daysFromNow = Math.max(0, (target - today) / MS_PER_DAY);
+
+    // Build a prediction lookup by binId
+    var predMap = {};
+    for (var i = 0; i < predictions.length; i++) {
+      predMap[predictions[i].binId] = predictions[i];
+    }
+
+    return bins.map(function (bin) {
+      var pred = predMap[bin.id];
+      var rate = (pred && pred.fillRatePerDay > 0) ? pred.fillRatePerDay : 0;
+      var projected = Math.min(100, Math.max(0, bin.fillLevel + rate * daysFromNow));
+      return {
+        id: bin.id,
+        name: bin.name,
+        lat: bin.lat,
+        lng: bin.lng,
+        fillLevel: Math.round(projected * 10) / 10,
+        confidence: pred ? pred.confidence : 'low',
+        originalFillLevel: bin.fillLevel
+      };
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────────
      PUBLIC INTERFACE
   ───────────────────────────────────────────────────────────────────────── */
 
@@ -653,6 +694,17 @@
           inferredFromFleet:        inferredFromFleet
         };
       });
+    },
+
+    /**
+     * projectFillLevels(bins, predictions, targetDateISO)
+     *
+     * Projects current bin fill levels forward to a future date using
+     * prediction fill rates. Returns new bin objects with projected fillLevel,
+     * confidence, and originalFillLevel.
+     */
+    projectFillLevels: function (bins, predictions, targetDateISO) {
+      return projectFillForDate(bins, predictions, targetDateISO);
     }
 
   };

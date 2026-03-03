@@ -203,6 +203,7 @@ export async function loadRouteById(routeId: string, routeName: string, existing
 export async function writeRouteToGeotab(
   baseName: string,
   optimizedBins: AlgoBin[],
+  dateOverride?: string,
 ): Promise<string | null> {
   const api = getGeotabApi();
   if (!api) {
@@ -212,7 +213,7 @@ export async function writeRouteToGeotab(
 
   if (optimizedBins.length < 2) return null;
 
-  const routeName = `SmartRoute-${baseName}-${new Date().toISOString().slice(0, 10)}`;
+  const routeName = `SmartRoute-${baseName}-${dateOverride || new Date().toISOString().slice(0, 10)}`;
 
   // Step 1: Ensure every bin has a real Geotab Zone ID
   const zoneRefs: { id: string }[] = [];
