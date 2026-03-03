@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer } from
@@ -6,6 +6,7 @@ import {
 import SmartRouteMap from "@/components/SmartRouteMap";
 import RouteOverlayPanel from "@/components/RouteOverlayPanel";
 import OptimizeReviewModal from "@/components/OptimizeReviewModal";
+import DriverReportModal from "@/components/DriverReportModal";
 import {
   TruckIcon,
   SearchIcon, CalendarIcon, CheckIcon, CloseIcon, SpinnerIcon,
@@ -196,6 +197,57 @@ const StatCard: React.FC<StatCardProps> = ({ icon, value, unit, label, decimals 
 };
 
 // ═══════════════════════════════════════════════
+// Tour Callout (inline step tooltip)
+// ═══════════════════════════════════════════════
+
+interface TourCalloutProps {
+  step: number;
+  activeStep: number;
+  title: string;
+  body: string;
+  totalSteps: number;
+  onNext: () => void;
+  onDismiss: () => void;
+  position?: "top" | "bottom";
+}
+
+const TourCallout: React.FC<TourCalloutProps> = ({
+  step, activeStep, title, body, totalSteps, onNext, onDismiss, position = "bottom",
+}) => {
+  if (activeStep !== step) return null;
+  const isLast = step === totalSteps - 1;
+
+  return (
+    <div
+      className={`absolute ${position === "bottom" ? "top-full mt-2" : "bottom-full mb-2"} left-0 z-[600] w-64 bg-card border border-primary/25 rounded-xl shadow-xl p-4 pointer-events-auto`}
+      style={{ animation: "fadeSlideUp 0.2s ease" }}
+    >
+      {/* Arrow */}
+      <div
+        className={`absolute ${position === "bottom" ? "-top-2" : "-bottom-2"} left-6 w-3 h-3 rotate-45 bg-card border-l border-t border-primary/25`}
+        style={position === "bottom" ? { borderBottomColor: "transparent", borderRightColor: "transparent" } : { borderTopColor: "transparent", borderLeftColor: "transparent" }}
+      />
+      <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-0.5">
+        Step {step + 1} of {totalSteps}
+      </div>
+      <div className="text-sm font-bold text-foreground mb-1">{title}</div>
+      <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">{body}</p>
+      <div className="flex justify-between items-center">
+        <button onClick={onDismiss} className="text-[11px] text-muted-foreground hover:underline">
+          Skip tour
+        </button>
+        <button
+          onClick={onNext}
+          className="text-[11px] font-bold text-primary-foreground bg-primary px-3 py-1.5 rounded-lg hover:bg-primary/90 transition"
+        >
+          {isLast ? "Got it!" : "Next →"}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════
 // Main Dashboard
 // ═══════════════════════════════════════════════
 
@@ -208,7 +260,27 @@ const Index: React.FC = () => {
   const [startDate, setStartDate] = useState("2026-02-15");
   const [endDate, setEndDate] = useState("2026-03-02");
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [focusRouteId, setFocusRouteId] = useState<string | null>(null);
+  const [tourStep, setTourStep] = useState(0); // -1 = dismissed
+  const [driverSimEnabled, setDriverSimEnabled] = useState(false);
+  const [showDriverModal, setShowDriverModal] = useState(false);
+
+  const TOUR_STEPS = 4;
+  const tourDone = tourStep < 0;
+  const advanceTour = useCallback(() => {
+    setTourStep((s) => (s >= TOUR_STEPS - 1 ? -1 : s + 1));
+  }, []);
+  const dismissTour = useCallback(() => setTourStep(-1), []);
+
+  // When a route is added, auto-advance past the search step
+  useEffect(() => {
+    if (sr.loadedRoutes.length > 0 && tourStep === 0) advanceTour();
+  }, [sr.loadedRoutes.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const searchWrapRef = useRef<HTMLDivElement>(null);
+  const dateAreaRef = useRef<HTMLDivElement>(null);
+  const thresholdCardRef = useRef<HTMLDivElement>(null);
+  const optimizeBtnRef = useRef<HTMLButtonElement>(null);
 
   // Determine optimize button state from hook
   const optimizeState = sr.isOptimizing ? "loading" as const
@@ -224,6 +296,23 @@ const Index: React.FC = () => {
   }, [sr.selectedRouteId, sr.optimizedMap, sr.aggregateMetrics]);
 
   const { hoursSaved, fuelSavedL: fuelSaved, co2AvoidedKg: co2Reduced, stopsSkipped } = displayMetrics;
+
+  // Ace insight fallback when Ace API is not available
+  const aceFallback = useMemo(() => {
+    const m = sr.aggregateMetrics;
+    if (!m || m.kmSaved <= 0) return null;
+    const trees = Math.round(m.co2AvoidedKg / 21.8);
+    return `Today's optimized routes reduce fleet distance by ${m.kmSaved.toFixed(1)} km, avoiding ${m.co2AvoidedKg.toFixed(1)} kg of CO₂ — equivalent to planting ${Math.max(1, trees)} tree${trees !== 1 ? "s" : ""} worth of carbon.`;
+  }, [sr.aggregateMetrics]);
+
+  // Overflow risk from predictions
+  const overflowRisk = useMemo(() => {
+    const preds = Object.values(sr.predictions);
+    if (preds.length === 0) return null;
+    const highRisk = preds.filter((p) => p.daysUntilThreshold !== Infinity && p.daysUntilThreshold <= 2).length;
+    const medRisk = preds.filter((p) => p.daysUntilThreshold !== Infinity && p.daysUntilThreshold > 2 && p.daysUntilThreshold <= 5).length;
+    return { highRisk, medRisk, total: preds.length };
+  }, [sr.predictions]);
 
   // Search filtering
   const filteredRoutes = useMemo(() => {
@@ -247,6 +336,8 @@ const Index: React.FC = () => {
     if (sr.isOptimizing || sr.loadedRoutes.length === 0) return;
     await sr.runOptimize();
     setShowReviewModal(true);
+    // Focus the first optimized route
+    if (sr.loadedRoutes.length > 0) setFocusRouteId(sr.loadedRoutes[0].id);
   };
 
   const handleSelectRoute = (route: GeotabRouteRef) => {
@@ -284,7 +375,7 @@ const Index: React.FC = () => {
       {/* ══════ TOP BAR ══════ */}
       <header className="bg-card shadow-sm sticky top-0 z-50">
         <div className="px-6 py-2.5 flex items-center gap-2.5">
-          <TruckIcon size={28} color="#7EC8E3" />
+          <TruckIcon size={28} color="hsl(200, 65%, 44%)" />
           <span className="text-xl font-extrabold text-foreground tracking-tight">smart route</span>
           <span className="text-[10px] font-bold text-muted-foreground px-2 py-0.5 rounded-full uppercase tracking-wider bg-muted">
             beta
@@ -296,13 +387,21 @@ const Index: React.FC = () => {
       <main className="p-6">
         <div className="flex gap-6" style={{ minHeight: "520px" }}>
           {/* LEFT — Controls + Map */}
-          <div className="w-[65%] flex flex-col gap-3">
+          <div className={`${showReviewModal ? "w-[58%]" : "w-[65%]"} flex flex-col gap-3 transition-all duration-300`}>
             {/* Controls bar — adaptive layout */}
             {sr.loadedRoutes.length === 0 ? (
               /* ── Single-row: no tags ── */
               <div className="flex items-center gap-3">
-                <div className="relative flex-1 max-w-xs" ref={searchWrapRef}>
-                  <SearchIcon size={16} color="hsl(240, 5%, 55%)" className="absolute left-3 top-1/2 -translate-y-1/2" />
+                <div className="relative flex-1 max-w-xs" ref={searchWrapRef} data-tour="search">
+                  {!tourDone && (
+                    <TourCallout
+                      step={0} activeStep={tourStep} totalSteps={TOUR_STEPS}
+                      title="Search for a route"
+                      body="Type a route name and click to load it on the map. You can add multiple routes."
+                      onNext={advanceTour} onDismiss={dismissTour}
+                    />
+                  )}
+                  <SearchIcon size={16} color="hsl(210, 15%, 50%)" className="absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     placeholder="Search routes..."
@@ -333,18 +432,26 @@ const Index: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="flex items-center gap-2 ml-auto relative" ref={dateAreaRef} data-tour="dates">
+                  {!tourDone && (
+                    <TourCallout
+                      step={1} activeStep={tourStep} totalSteps={TOUR_STEPS}
+                      title="Set your date range"
+                      body="Pick the schedule window. SmartRoute uses this to predict which bins will need collection."
+                      onNext={advanceTour} onDismiss={dismissTour}
+                    />
+                  )}
                   <div className="relative">
-                    <CalendarIcon size={14} color="hsl(240, 5%, 55%)" className="absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <CalendarIcon size={14} color="hsl(210, 15%, 50%)" className="absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="date"
                       value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      onChange={(e) => { setStartDate(e.target.value); if (tourStep === 1) advanceTour(); }}
                       className="pl-8 pr-2 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-primary/30 transition" />
                   </div>
                   <span className="text-muted-foreground text-xs">to</span>
                   <div className="relative">
-                    <CalendarIcon size={14} color="hsl(240, 5%, 55%)" className="absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <CalendarIcon size={14} color="hsl(210, 15%, 50%)" className="absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="date"
                       value={endDate}
@@ -458,33 +565,12 @@ const Index: React.FC = () => {
 
             {/* Map */}
             <div className="relative flex-1 min-h-0">
-              {/* Onboarding overlay — shown when no routes loaded */}
+                {/* Onboarding: ghost map hint when empty */}
               {sr.loadedRoutes.length === 0 && (
-                <div className="absolute inset-0 z-[500] flex items-center justify-center pointer-events-none">
-                  <div className="bg-card/95 backdrop-blur-sm rounded-2xl shadow-xl p-8 max-w-sm w-full mx-4 pointer-events-auto">
-                    <h2 className="text-base font-extrabold text-foreground mb-1 text-center">
-                      Get started
-                    </h2>
-                    <p className="text-xs text-muted-foreground text-center mb-6">
-                      Three steps to optimize your waste collection routes
-                    </p>
-                    <div className="flex flex-col gap-4">
-                      {[
-                        { step: "1", icon: <SearchIcon size={18} color="#7EC8E3" />, label: "Search & select a route", sub: "Use the search bar above to add routes to the map" },
-                        { step: "2", icon: <span className="text-[#C9B6FF] text-lg font-extrabold leading-none">%</span>, label: "Adjust the fill threshold", sub: "Set the bin fill level that triggers collection" },
-                        { step: "3", icon: <TruckIcon size={18} color="#7EC8E3" />, label: 'Click "Optimize & See Savings"', sub: "The algorithm will plan the smartest routes" },
-                      ].map(({ step, icon, label, sub }) => (
-                        <div key={step} className="flex items-start gap-4">
-                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                            {icon}
-                          </div>
-                          <div>
-                            <div className="text-sm font-semibold text-foreground">{label}</div>
-                            <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                <div className="absolute inset-0 z-[490] flex items-center justify-center pointer-events-none">
+                  <div className="text-center opacity-50">
+                    <TruckIcon size={48} color="hsl(200,65%,44%)" />
+                    <p className="text-sm font-semibold text-muted-foreground mt-2">Add a route to get started</p>
                   </div>
                 </div>
               )}
@@ -497,6 +583,7 @@ const Index: React.FC = () => {
                   loadedRoutes={sr.loadedRoutes}
                   selectedRouteId={sr.selectedRouteId}
                   onRouteSelect={sr.setSelectedRouteId}
+                  focusRouteId={focusRouteId}
                 />
               </div>
               <div className="absolute top-4 right-4 z-[1000] bg-card/90 backdrop-blur-sm rounded-full px-3 py-1.5 flex items-center gap-1.5 shadow-sm">
@@ -536,10 +623,18 @@ const Index: React.FC = () => {
             </div>
           </div>
 
-          {/* RIGHT — Controls */}
-          <div className="w-[35%] flex flex-col gap-4">
+          {/* RIGHT — Controls or Review Panel */}
+          <div className={`${showReviewModal ? "w-[42%]" : "w-[35%]"} flex flex-col gap-4 transition-all duration-300`}>
             {/* Combined Threshold + Intensity Card */}
-            <div className="bg-card shadow-sm p-6 rounded">
+            {!showReviewModal && (<div className="bg-card shadow-sm p-6 rounded relative" ref={thresholdCardRef} data-tour="threshold">
+              {!tourDone && (
+                <TourCallout
+                  step={2} activeStep={tourStep} totalSteps={TOUR_STEPS}
+                  title="Tune the fill threshold"
+                  body="Drag to set the fill % that triggers collection. Lower = more stops, higher = fewer stops with full bins only."
+                  onNext={advanceTour} onDismiss={dismissTour}
+                />
+              )}
               <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
                 Bin Threshold
               </label>
@@ -594,33 +689,50 @@ const Index: React.FC = () => {
                   Higher = collect more sub-threshold bins with low detour cost
                 </p>
               </div>
-            </div>
+            </div>)}
 
             {/* Optimize Button — above stat cards */}
-            <button
-              onClick={handleOptimize}
-              disabled={sr.isOptimizing || sr.loadedRoutes.length === 0}
-              className="w-full py-3.5 bg-gradient-to-r from-[#7EC8E3] to-[#C9B6FF] text-white font-bold text-sm flex items-center justify-center gap-2.5 hover:opacity-90 transition disabled:opacity-60 shadow-md rounded">
-              {sr.isOptimizing ? (
-                <>
-                  <SpinnerIcon size={18} color="white" />
-                  Optimizing...
-                </>
-              ) : optimizeState === "optimized" ? (
-                <>
-                  <CheckIcon size={18} color="white" />
-                  Optimized! Review again
-                </>
-              ) : (
-                <>
-                  <TruckIcon size={18} color="white" />
-                  Optimize &amp; See Savings
-                </>
-              )}
-            </button>
+            {!showReviewModal && (
+              <>
+                <div className="relative">
+                  {!tourDone && (
+                    <TourCallout
+                      step={3} activeStep={tourStep} totalSteps={TOUR_STEPS}
+                      title="Optimize & See Savings"
+                      body="SmartRoute runs Clarke-Wright + OR-Opt to find the most efficient routes, skipping bins that don't need collection."
+                      onNext={advanceTour} onDismiss={dismissTour}
+                      position="top"
+                    />
+                  )}
+                </div>
+                <button
+                  ref={optimizeBtnRef}
+                  onClick={() => { handleOptimize(); if (tourStep === 3) dismissTour(); }}
+                  disabled={sr.isOptimizing || sr.loadedRoutes.length === 0}
+                  className="w-full py-3.5 bg-gradient-to-r from-primary to-accent text-white font-bold text-sm flex items-center justify-center gap-2.5 hover:opacity-90 transition disabled:opacity-60 shadow-md rounded"
+                >
+                  {sr.isOptimizing ? (
+                    <>
+                      <SpinnerIcon size={18} color="white" />
+                      Optimizing...
+                    </>
+                  ) : optimizeState === "optimized" ? (
+                    <>
+                      <CheckIcon size={18} color="white" />
+                      Optimized! Review again
+                    </>
+                  ) : (
+                    <>
+                      <TruckIcon size={18} color="white" />
+                      Optimize &amp; See Savings
+                    </>
+                  )}
+                </button>
+              </>
+            )}
 
             {/* Metrics context label */}
-            {sr.selectedRouteId && sr.optimizedMap[sr.selectedRouteId] && (
+            {!showReviewModal && sr.selectedRouteId && sr.optimizedMap[sr.selectedRouteId] && (
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span
@@ -641,46 +753,124 @@ const Index: React.FC = () => {
             )}
 
             {/* Stat Cards */}
-            <div className="grid grid-cols-2 gap-3">
-              <StatCard
-                icon={<img src={iconClock} alt="clock" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
-                value={hoursSaved}
-                unit="hrs"
-                label="Hours Saved" />
+            {!showReviewModal && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <StatCard
+                    icon={<img src={iconClock} alt="clock" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
+                    value={hoursSaved}
+                    unit="hrs"
+                    label="Hours Saved" />
 
-              <StatCard
-                icon={<img src={iconFuel} alt="fuel" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
-                value={fuelSaved}
-                unit="L"
-                label="Fuel Saved" />
+                  <StatCard
+                    icon={<img src={iconFuel} alt="fuel" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
+                    value={fuelSaved}
+                    unit="L"
+                    label="Fuel Saved" />
 
-              <StatCard
-                icon={<img src={iconCo2} alt="leaf" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
-                value={co2Reduced}
-                unit="kg"
-                label="CO&#x2082; Reduced" />
+                  <StatCard
+                    icon={<img src={iconCo2} alt="leaf" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
+                    value={co2Reduced}
+                    unit="kg"
+                    label="CO&#x2082; Reduced" />
 
-              <StatCard
-                icon={<img src={iconStop} alt="stop" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
-                value={stopsSkipped}
-                unit=""
-                label="Stops Skipped"
-                decimals={0} />
-            </div>
+                  <StatCard
+                    icon={<img src={iconStop} alt="stop" style={{ width: 36, height: 36, imageRendering: "pixelated" }} />}
+                    value={stopsSkipped}
+                    unit=""
+                    label="Stops Skipped"
+                    decimals={0} />
+                </div>
+
+                {/* Overflow Risk Card */}
+                {overflowRisk && overflowRisk.highRisk + overflowRisk.medRisk > 0 && (
+                  <div className="bg-card shadow-sm rounded p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
+                        Overflow Risk
+                      </span>
+                      <div className="relative group">
+                        <button className="w-4 h-4 rounded-full bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center hover:bg-primary/20 transition">i</button>
+                        <div className="absolute bottom-full right-0 mb-2 w-52 bg-foreground text-background text-[11px] rounded-lg px-3 py-2 shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 leading-relaxed">
+                          Bins predicted to reach threshold within 2 days (high) or 5 days (medium).
+                          <div className="absolute top-full right-3 border-4 border-transparent border-t-foreground" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {overflowRisk.highRisk > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-destructive" />
+                          <span className="text-sm font-extrabold text-destructive">{overflowRisk.highRisk}</span>
+                          <span className="text-xs text-muted-foreground">critical</span>
+                        </div>
+                      )}
+                      {overflowRisk.medRisk > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                          <span className="text-sm font-extrabold text-amber-500">{overflowRisk.medRisk}</span>
+                          <span className="text-xs text-muted-foreground">soon</span>
+                        </div>
+                      )}
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        of {overflowRisk.total} bins
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-destructive transition-all"
+                        style={{ width: `${Math.round((overflowRisk.highRisk / overflowRisk.total) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Review Panel — shown in right column after optimization */}
+            {showReviewModal && (() => {
+              const optimizedRoutes = sr.loadedRoutes
+                .map((route) => {
+                  const opt = sr.optimizedMap[route.id];
+                  return opt ? { route, opt } : null;
+                })
+                .filter(Boolean) as { route: typeof sr.loadedRoutes[0]; opt: typeof sr.optimizedMap[string] }[];
+
+              if (optimizedRoutes.length === 0) return null;
+
+              return (
+                <div className="bg-card shadow-sm rounded p-5 flex-1 min-h-0 overflow-y-auto">
+                  <OptimizeReviewModal
+                    optimizedRoutes={optimizedRoutes}
+                    onAccept={async (routeId) => {
+                      const routeName = await sr.acceptRoute(routeId);
+                      if (routeName) {
+                        toast({ title: "Route accepted", description: `"${routeName}" saved to Geotab.` });
+                      } else {
+                        toast({ title: "Failed to save route", variant: "destructive" });
+                      }
+                      return routeName;
+                    }}
+                    onDiscard={(routeId) => sr.discardRoute(routeId)}
+                    onClose={() => setShowReviewModal(false)}
+                    onRouteChange={(routeId) => setFocusRouteId(routeId)}
+                  />
+                </div>
+              );
+            })()}
           </div>
         </div>
 
         {/* ══════ ACE INSIGHT BANNER ══════ */}
-        {(sr.aceInsightLoading || sr.aceInsight) && (
-          <div className="mt-6 bg-gradient-to-r from-[#7EC8E3]/10 to-[#C9B6FF]/10 border border-[#C9B6FF]/30 rounded-xl px-5 py-4 flex items-start gap-3">
-            {/* AI sparkle icon */}
+        {optimizeState === "optimized" && (
+          <div className="mt-6 bg-gradient-to-r from-primary/8 to-accent/8 border border-primary/20 rounded-xl px-5 py-4 flex items-start gap-3">
             <div className="shrink-0 mt-0.5">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M10 2L11.5 7.5H17L12.5 11L14 16.5L10 13.5L6 16.5L7.5 11L3 7.5H8.5L10 2Z" fill="url(#sparkle-grad)" />
+                <path d="M10 2L11.5 7.5H17L12.5 11L14 16.5L10 13.5L6 16.5L7.5 11L3 7.5H8.5L10 2Z" fill="url(#sparkle-grad2)" />
                 <defs>
-                  <linearGradient id="sparkle-grad" x1="3" y1="2" x2="17" y2="16.5" gradientUnits="userSpaceOnUse">
-                    <stop stopColor="#7EC8E3" />
-                    <stop offset="1" stopColor="#C9B6FF" />
+                  <linearGradient id="sparkle-grad2" x1="3" y1="2" x2="17" y2="16.5" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="hsl(200,65%,44%)" />
+                    <stop offset="1" stopColor="hsl(210,50%,28%)" />
                   </linearGradient>
                 </defs>
               </svg>
@@ -691,11 +881,13 @@ const Index: React.FC = () => {
               </div>
               {sr.aceInsightLoading && !sr.aceInsight ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <SpinnerIcon size={12} color="hsl(200, 70%, 55%)" />
+                  <SpinnerIcon size={12} color="hsl(200, 65%, 44%)" />
                   Generating fleet insight...
                 </div>
               ) : (
-                <p className="text-sm text-foreground leading-relaxed">{sr.aceInsight}</p>
+                <p className="text-sm text-foreground leading-relaxed">
+                  {sr.aceInsight || aceFallback || "Route optimization complete. Review your savings above."}
+                </p>
               )}
             </div>
           </div>
@@ -724,16 +916,16 @@ const Index: React.FC = () => {
                 <Line
                   type="monotone"
                   dataKey="thisMonth"
-                  stroke="#7EC8E3"
+                  stroke="hsl(200,65%,44%)"
                   strokeWidth={2.5}
-                  dot={{ r: 4, fill: "#7EC8E3" }}
+                  dot={{ r: 4, fill: "hsl(200,65%,44%)" }}
                   name="This Month" />
                 <Line
                   type="monotone"
                   dataKey="lastMonth"
-                  stroke="#E0D6F6"
+                  stroke="hsl(200,30%,75%)"
                   strokeWidth={2}
-                  dot={{ r: 3, fill: "#E0D6F6" }}
+                  dot={{ r: 3, fill: "hsl(200,30%,75%)" }}
                   strokeDasharray="4 4"
                   name="Last Month" />
               </LineChart>
@@ -758,7 +950,7 @@ const Index: React.FC = () => {
                     boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
                     fontSize: "12px"
                   }} />
-                <Bar dataKey="skipped" fill="#C9B6FF" radius={[6, 6, 0, 0]} name="Stops Skipped" />
+                <Bar dataKey="skipped" fill="hsl(200,65%,44%)" radius={[6, 6, 0, 0]} name="Stops Skipped" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -782,60 +974,130 @@ const Index: React.FC = () => {
               ? "bg-yellow-100 text-yellow-700"
               : "bg-red-100 text-red-700";
 
+          const actionBadge = (days: number, conf: string) => {
+            if (days === 0) return { label: "Collect Today", cls: "bg-destructive/15 text-destructive" };
+            if (days <= 2) return { label: "Schedule Soon", cls: "bg-orange-100 text-orange-700" };
+            if (days <= 7) return { label: "Plan Collection", cls: "bg-yellow-100 text-yellow-700" };
+            return { label: "On Track", cls: "bg-green-100 text-green-700" };
+          };
+
+          const simConfidence = (c: string) => {
+            if (c === "low") return "medium";
+            if (c === "medium") return "high";
+            return c;
+          };
+
+          const criticalCount = predRows.filter((r) => r.pred.daysUntilThreshold <= 2).length;
+          const totalFillRate = predRows.reduce((s, r) => s + r.pred.fillRatePerDay, 0);
+          const avgFillRate = predRows.length > 0 ? (totalFillRate / predRows.length).toFixed(1) : "—";
+
           return (
             <div className="mt-6 bg-card shadow-sm rounded p-6">
-              <h3 className="text-sm font-bold text-foreground mb-1">Bin Fill Predictions</h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                AI-powered fill rate forecasts based on historical collection logs
-              </p>
+              <div className="flex items-start justify-between mb-1">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Bin Fill Predictions</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    AI-powered fill rate forecasts based on historical collection logs
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0 ml-4">
+                  {/* Driver sim toggle */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground font-medium whitespace-nowrap">Simulate driver data</span>
+                    <button
+                      type="button"
+                      onClick={() => setDriverSimEnabled((v) => !v)}
+                      className={`relative w-9 h-5 rounded-full transition-colors ${driverSimEnabled ? "bg-primary" : "bg-muted"}`}
+                    >
+                      <span
+                        className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform"
+                        style={{ left: driverSimEnabled ? "calc(100% - 18px)" : 2 }}
+                      />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setShowDriverModal(true)}
+                    className="text-[11px] font-semibold text-primary-foreground bg-primary px-3 py-1.5 rounded-lg hover:bg-primary/90 transition whitespace-nowrap"
+                  >
+                    View mockup
+                  </button>
+                </div>
+              </div>
+
+              {driverSimEnabled && (
+                <div className="mb-3 flex items-center gap-2 text-[11px] text-primary bg-primary/8 border border-primary/20 rounded-lg px-3 py-2">
+                  <span className="font-bold">Simulation active:</span>
+                  Driver-confirmed data applied — confidence scores boosted where applicable.
+                </div>
+              )}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Bin</th>
-                      <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Route</th>
-                      <th className="text-right py-2 pr-4 font-semibold text-muted-foreground">Fill rate / day</th>
-                      <th className="text-right py-2 pr-4 font-semibold text-muted-foreground">Days to threshold</th>
-                      <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Predicted date</th>
-                      <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Recommended days</th>
-                      <th className="text-left py-2 font-semibold text-muted-foreground">Confidence</th>
+                      <th className="text-left py-2 pr-3 font-semibold text-muted-foreground">Bin</th>
+                      <th className="text-left py-2 pr-3 font-semibold text-muted-foreground">Route</th>
+                      <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Rate/day</th>
+                      <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Days left</th>
+                      <th className="text-left py-2 pr-3 font-semibold text-muted-foreground">Predicted date</th>
+                      <th className="text-left py-2 pr-3 font-semibold text-muted-foreground">Confidence</th>
+                      <th className="text-left py-2 font-semibold text-muted-foreground">Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {predRows.map(({ bin, pred, routeColor, routeName }) => (
-                      <tr key={bin.id} className="border-b border-border/50 hover:bg-muted/30 transition">
-                        <td className="py-2 pr-4 font-medium text-foreground">{bin.name}</td>
-                        <td className="py-2 pr-4">
-                          <span className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: routeColor }} />
-                            {routeName}
-                          </span>
-                        </td>
-                        <td className="py-2 pr-4 text-right font-mono">
-                          {pred.fillRatePerDay > 0 ? `${pred.fillRatePerDay}%` : "—"}
-                        </td>
-                        <td className="py-2 pr-4 text-right font-mono">
-                          {pred.daysUntilThreshold === Infinity ? "—" : pred.daysUntilThreshold === 0 ? "Now" : `${pred.daysUntilThreshold}d`}
-                        </td>
-                        <td className="py-2 pr-4">
-                          {pred.predictedThresholdDate ?? "—"}
-                        </td>
-                        <td className="py-2 pr-4 text-muted-foreground">
-                          {pred.recommendedCollectionDays.length > 0
-                            ? pred.recommendedCollectionDays.slice(0, 3).join(", ")
-                            : "—"}
-                        </td>
-                        <td className="py-2">
-                          <span className={`px-2 py-0.5 rounded-full font-semibold capitalize ${confidenceStyle(pred.confidence)}`}>
-                            {pred.confidence}
-                          </span>
-                          {pred.inferredFromFleet && (
-                            <span className="ml-1 text-muted-foreground text-[10px]">(fleet avg)</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {predRows.map(({ bin, pred, routeColor, routeName }) => {
+                      const displayConf = driverSimEnabled ? simConfidence(pred.confidence) : pred.confidence;
+                      const confBoosted = driverSimEnabled && displayConf !== pred.confidence;
+                      const badge = actionBadge(pred.daysUntilThreshold === Infinity ? 999 : pred.daysUntilThreshold, displayConf);
+                      return (
+                        <tr key={bin.id} className="border-b border-border/50 hover:bg-muted/30 transition">
+                          <td className="py-2 pr-3 font-medium text-foreground">{bin.name}</td>
+                          <td className="py-2 pr-3">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: routeColor }} />
+                              {routeName}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-3 text-right font-mono">
+                            {pred.fillRatePerDay > 0 ? `${pred.fillRatePerDay}%` : "—"}
+                          </td>
+                          <td className="py-2 pr-3 text-right font-mono">
+                            {pred.daysUntilThreshold === Infinity ? "—" : pred.daysUntilThreshold === 0 ? "Now" : `${pred.daysUntilThreshold}d`}
+                          </td>
+                          <td className="py-2 pr-3">{pred.predictedThresholdDate ?? "—"}</td>
+                          <td className="py-2 pr-3">
+                            <span className={`px-2 py-0.5 rounded-full font-semibold capitalize ${confidenceStyle(displayConf)}`}>
+                              {displayConf}
+                            </span>
+                            {confBoosted && <span className="ml-1 text-primary text-[10px] font-bold">↑driver</span>}
+                            {pred.inferredFromFleet && !confBoosted && (
+                              <span className="ml-1 text-muted-foreground text-[10px]">(fleet avg)</span>
+                            )}
+                          </td>
+                          <td className="py-2">
+                            <span className={`px-2 py-0.5 rounded-full font-semibold ${badge.cls}`}>
+                              {badge.label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/20">
+                      <td className="py-2 pr-3 font-bold text-foreground">Summary</td>
+                      <td className="py-2 pr-3 text-muted-foreground">{predRows.length} bins</td>
+                      <td className="py-2 pr-3 text-right font-mono text-muted-foreground">{avgFillRate}% avg</td>
+                      <td colSpan={2} className="py-2 pr-3 text-muted-foreground">
+                        {criticalCount > 0
+                          ? <span className="text-destructive font-semibold">{criticalCount} need urgent collection</span>
+                          : "All bins on schedule"}
+                      </td>
+                      <td colSpan={2} className="py-2 text-muted-foreground text-[11px]">
+                        {driverSimEnabled ? "Driver data simulated" : "Sensor data only"}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
@@ -843,34 +1105,8 @@ const Index: React.FC = () => {
         })()}
       </main>
 
-      {/* ══════ OPTIMIZE REVIEW MODAL ══════ */}
-      {showReviewModal && (() => {
-        const optimizedRoutes = sr.loadedRoutes
-          .map((route) => {
-            const opt = sr.optimizedMap[route.id];
-            return opt ? { route, opt } : null;
-          })
-          .filter(Boolean) as { route: typeof sr.loadedRoutes[0]; opt: typeof sr.optimizedMap[string] }[];
-
-        if (optimizedRoutes.length === 0) return null;
-
-        return (
-          <OptimizeReviewModal
-            optimizedRoutes={optimizedRoutes}
-            onAccept={async (routeId) => {
-              const routeName = await sr.acceptRoute(routeId);
-              if (routeName) {
-                toast({ title: "Route accepted", description: `"${routeName}" saved to Geotab.` });
-              } else {
-                toast({ title: "Failed to save route", variant: "destructive" });
-              }
-              return routeName;
-            }}
-            onDiscard={(routeId) => sr.discardRoute(routeId)}
-            onClose={() => setShowReviewModal(false)}
-          />
-        );
-      })()}
+      {/* ══════ DRIVER REPORT MODAL ══════ */}
+      {showDriverModal && <DriverReportModal onClose={() => setShowDriverModal(false)} />}
     </div>);
 
 };
