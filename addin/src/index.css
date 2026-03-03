@@ -6,39 +6,43 @@
 
 @layer base {
   :root {
-    --background: 240 20% 97%;
-    --foreground: 240 10% 25%;
+    --background: 200 18% 96%;
+    --foreground: 210 25% 18%;
 
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 25%;
+    --card-foreground: 210 25% 18%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 25%;
+    --popover-foreground: 210 25% 18%;
 
-    --primary: 200 70% 55%;
+    /* Brand teal — deeper, more professional */
+    --primary: 200 65% 44%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 15% 93%;
-    --secondary-foreground: 240 10% 25%;
+    --secondary: 200 20% 92%;
+    --secondary-foreground: 210 25% 18%;
 
-    --muted: 240 15% 93%;
-    --muted-foreground: 240 5% 55%;
+    --muted: 200 18% 92%;
+    --muted-foreground: 210 15% 50%;
 
-    --accent: 160 50% 55%;
+    /* Deep navy accent replaces purple */
+    --accent: 210 50% 28%;
     --accent-foreground: 0 0% 100%;
 
-    --destructive: 350 70% 65%;
+    --destructive: 5 72% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 15% 90%;
-    --input: 240 15% 90%;
-    --ring: 200 70% 55%;
+    --border: 200 18% 88%;
+    --input: 200 18% 88%;
+    --ring: 200 65% 44%;
 
-    --radius: 1rem;
+    --radius: 0.75rem;
 
-    --smartroute-navy: 240 20% 30%;
-    --smartroute-teal: 160 50% 55%;
-    --smartroute-red: 350 70% 65%;
+    --smartroute-navy: 210 50% 28%;
+    --smartroute-teal: 200 65% 44%;
+    --smartroute-red: 5 72% 58%;
+    --smartroute-teal-light: 200 55% 62%;
+    --smartroute-teal-dark: 200 70% 32%;
   }
 }
 
@@ -64,4 +68,20 @@
 }
 .leaflet-popup-tip {
   box-shadow: none !important;
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Utility — transparent gradient step (Tailwind doesn't generate /8) */
+.bg-primary\/8 {
+  background-color: hsl(200 65% 44% / 0.08);
+}
+.from-primary\/8 {
+  --tw-gradient-from: hsl(200 65% 44% / 0.08);
+}
+.to-accent\/8 {
+  --tw-gradient-to: hsl(210 50% 28% / 0.08);
 }

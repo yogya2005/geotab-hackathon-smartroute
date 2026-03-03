@@ -25,6 +25,7 @@ interface SmartRouteMapProps {
   loadedRoutes: LoadedRoute[];
   selectedRouteId: string | null;
   onRouteSelect: (routeId: string) => void;
+  focusRouteId?: string | null;
 }
 
 const getOverflowTime = (fillLevel: number): string => {
@@ -68,7 +69,6 @@ const MapController: React.FC<{ bins: Bin[] }> = ({ bins }) => {
 
   useEffect(() => {
     if (bins.length === 0) return;
-    // Only zoom when new bins are added (not on threshold re-render)
     if (bins.length <= prevCountRef.current) return;
     prevCountRef.current = bins.length;
 
@@ -81,8 +81,32 @@ const MapController: React.FC<{ bins: Bin[] }> = ({ bins }) => {
   return null;
 };
 
+/* Zoom to a specific route's bins when focusRouteId changes */
+const MapFocusController: React.FC<{ focusRouteId: string | null; loadedRoutes: LoadedRoute[] }> = ({
+  focusRouteId,
+  loadedRoutes,
+}) => {
+  const map = useMap();
+  const prevFocusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!focusRouteId || focusRouteId === prevFocusRef.current) return;
+    prevFocusRef.current = focusRouteId;
+
+    const route = loadedRoutes.find((r) => r.id === focusRouteId);
+    if (!route || route.bins.length === 0) return;
+
+    const bounds = L.latLngBounds(route.bins.map((b) => [b.lat, b.lng] as L.LatLngTuple));
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [56, 56], maxZoom: 15 });
+    }
+  }, [focusRouteId, loadedRoutes, map]);
+
+  return null;
+};
+
 const SmartRouteMap: React.FC<SmartRouteMapProps> = ({
-  bins, threshold, optimizeState, optimizedMap, loadedRoutes, selectedRouteId, onRouteSelect,
+  bins, threshold, optimizeState, optimizedMap, loadedRoutes, selectedRouteId, onRouteSelect, focusRouteId,
 }) => {
   const icons = useMemo(() => {
     const map = new Map<string, L.DivIcon>();
@@ -160,6 +184,7 @@ const SmartRouteMap: React.FC<SmartRouteMapProps> = ({
         url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
       />
       <MapController bins={bins} />
+      <MapFocusController focusRouteId={focusRouteId ?? null} loadedRoutes={loadedRoutes} />
 
       {/* Original route lines — always visible as dashed, dimmed when optimized */}
       {originalPolylines.map((line, i) => (
